@@ -82,6 +82,10 @@ export default function RootLayout() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="login" />
       <Stack.Screen name="gym-setup" />
+      <Stack.Screen
+        name="member/[id]"
+        options={{ headerShown: true, title: 'Member Detail', headerBackTitle: 'Members' }}
+      />
     </Stack>
   );
 }
