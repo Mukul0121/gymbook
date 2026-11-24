@@ -1,56 +1,87 @@
-import { useFonts } from 'expo-font';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import 'react-native-reanimated';
-
-import { useColorScheme } from '@/components/useColorScheme';
-
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
-
-export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
-  anchor: '(tabs)',
-};
-
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
+import { Session } from '@supabase/supabase-js';
+import { Stack, useRouter, useSegments } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, View } from 'react-native';
+import { supabase } from '../lib/supabase';
 
 export default function RootLayout() {
-  const [loaded, error] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-  });
+  const [session, setSession] = useState<Session | null>(null);
+  const [hasGym, setHasGym] = useState<boolean | null>(null);
+  const [ready, setReady] = useState(false);
+  const router = useRouter();
+  const segments = useSegments();
 
-  // Expo Router uses Error Boundaries to catch errors in the navigation tree.
-  useEffect(() => {
-    if (error) throw error;
-  }, [error]);
-
-  useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded]);
-
-  if (!loaded) {
-    return null;
+  async function checkGym(userId: string) {
+    const { data } = await supabase
+      .from('gyms')
+      .select('id')
+      .eq('owner_id', userId)
+      .limit(1);
+    const exists = Boolean(data && data.length > 0);
+    setHasGym(exists);
+    return exists;
   }
 
-  return <RootLayoutNav />;
-}
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      setSession(session);
+      if (session) await checkGym(session.user.id);
+      setReady(true);
+    });
 
-function RootLayoutNav() {
-  const colorScheme = useColorScheme();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setSession(session);
+      if (session) {
+        await checkGym(session.user.id);
+      } else {
+        setHasGym(null);
+      }
+      setReady(true);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    const current = segments[0];
+
+    async function routeUser() {
+      if (!session) {
+        if (current !== 'login') router.replace('/login');
+        return;
+      }
+
+      if (hasGym === false) {
+        // Re-check in case the user just finished Gym Setup
+        const exists = await checkGym(session.user.id);
+        if (!exists && current !== 'gym-setup') {
+          router.replace('/gym-setup');
+        }
+        return;
+      }
+
+      if (hasGym === true && (current === 'login' || current === 'gym-setup')) {
+        router.replace('/(tabs)');
+      }
+    }
+
+    routeUser();
+  }, [ready, session, hasGym, segments]);
+
+  if (!ready) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
+        <ActivityIndicator size="large" color="#111" />
+      </View>
+    );
+  }
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-      </Stack>
-    </ThemeProvider>
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="login" />
+      <Stack.Screen name="gym-setup" />
+    </Stack>
   );
 }
